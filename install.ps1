@@ -74,47 +74,78 @@ if (Test-Path "$installDir\TheSuperMouse") {
     }
 }
 
-# 3. Download from Server with Live Progress
+# 3. Resilient Multi-Mirror Download with Live Progress
 $zipPath = "$env:TEMP\TheSuperMouse_Full.zip"
-$downloadUrl = "https://github.com/getsupermouse/supermouse-newmodes/releases/download/v1.01/TheSuperMouse_Full.zip"
+$downloadCandidates = @(
+    "https://github.com/getsupermouse/supermouse-newmodes/releases/download/v1.01/TheSuperMouse_Full.zip",
+    "https://github.com/getsupermouse/supermousenewnupdates/releases/download/v1.01/TheSuperMouse_Full.zip",
+    "https://github.com/getsupermouse/thesupermouse-releases/releases/download/v1.01/TheSuperMouse_Full.zip"
+)
 
 Write-Host ""
 Write-Host "  [Step 2/2] Connecting to SuperMouse Cloud Servers..." -ForegroundColor Cyan
 
-try {
-    $req = [System.Net.HttpWebRequest]::Create($downloadUrl)
-    $req.UserAgent = "SuperMouseInstaller"
-    $resp = $req.GetResponse()
-    $totalBytes = $resp.ContentLength
-    $totalMB = [Math]::Round($totalBytes / 1MB, 1)
-    $stream = $resp.GetResponseStream()
-    $fileStream = [System.IO.File]::Create($zipPath)
-    $buffer = New-Object byte[] 65536
-    $downloadedBytes = 0
-    $lastPct = -1
+$downloadSuccess = $false
+foreach ($targetUrl in $downloadCandidates) {
+    if ($downloadSuccess) { break }
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($targetUrl)
+        $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TheSuperMouseInstaller"
+        $req.Timeout = 15000
+        $req.AllowAutoRedirect = $true
+        $resp = $req.GetResponse()
+        $totalBytes = $resp.ContentLength
+        $totalMB = if ($totalBytes -gt 0) { [Math]::Round($totalBytes / 1MB, 1) } else { 115.5 }
+        $stream = $resp.GetResponseStream()
+        $fileStream = [System.IO.File]::Create($zipPath)
+        $buffer = New-Object byte[] 65536
+        $downloadedBytes = 0
+        $lastPct = -1
 
-    while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-        $fileStream.Write($buffer, 0, $bytesRead)
-        $downloadedBytes += $bytesRead
-        $pct = [Math]::Floor(($downloadedBytes / $totalBytes) * 100)
-        if ($pct -ne $lastPct) {
-            $lastPct = $pct
-            $curMB = [Math]::Round($downloadedBytes / 1MB, 1)
-            $barLen = 25
-            $filled = [Math]::Floor(($pct / 100) * $barLen)
-            $empty = $barLen - $filled
-            $bar = ("=" * $filled) + (" " * $empty)
-            Write-Host -NoNewline "`r  [*] Downloading: [$bar] $pct% ($curMB MB / $totalMB MB)"
+        while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fileStream.Write($buffer, 0, $bytesRead)
+            $downloadedBytes += $bytesRead
+            if ($totalBytes -gt 0) {
+                $pct = [Math]::Floor(($downloadedBytes / $totalBytes) * 100)
+                if ($pct -ne $lastPct) {
+                    $lastPct = $pct
+                    $curMB = [Math]::Round($downloadedBytes / 1MB, 1)
+                    $barLen = 25
+                    $filled = [Math]::Floor(($pct / 100) * $barLen)
+                    $empty = $barLen - $filled
+                    $bar = ("=" * $filled) + (" " * $empty)
+                    Write-Host -NoNewline "`r  [*] Downloading: [$bar] $pct% ($curMB MB / $totalMB MB)"
+                }
+            }
         }
+        $fileStream.Close()
+        $stream.Close()
+        $resp.Close()
+
+        if ((Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 10000000)) {
+            $downloadSuccess = $true
+            Write-Host ""
+            Write-Host "  [+] Package download verified successfully!" -ForegroundColor Green
+            break
+        }
+    } catch {
+        # Fallback to Invoke-WebRequest for this candidate
+        try {
+            Write-Host "  [*] Mirror failover, trying fallback connection..." -ForegroundColor Yellow
+            Invoke-WebRequest -Uri $targetUrl -OutFile $zipPath -UserAgent "SuperMouseInstaller" -UseBasicParsing -TimeoutSec 30
+            if ((Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 10000000)) {
+                $downloadSuccess = $true
+                Write-Host "  [+] Package download verified!" -ForegroundColor Green
+                break
+            }
+        } catch {}
     }
-    $fileStream.Close()
-    $stream.Close()
-    $resp.Close()
-    Write-Host ""
-    Write-Host "  [+] Package download verified!" -ForegroundColor Green
-} catch {
-    Write-Host "  [*] Downloading via fallback..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+}
+
+if (-not $downloadSuccess) {
+    Write-Host "  [ERROR] Could not download package from any cloud mirror." -ForegroundColor Red
+    Write-Host "          Please check your internet connection or firewall." -ForegroundColor Yellow
+    exit 1
 }
 
 # 4. Extract Package Files with Progress
@@ -173,8 +204,6 @@ Get-CimInstance Win32_Process | Where-Object { (`$_.Name -eq 'pythonw.exe' -or `
 Start-Sleep -Seconds 1
 
 Write-Host "  [*] Restoring Windows 10/11 Default White Cursors..." -ForegroundColor Cyan
-
-# Remove custom cursor registry overrides
 `$cursorReg = 'HKCU:\Control Panel\Cursors'
 `$cursorNames = @('Arrow', 'Hand', 'Wait', 'IBeam', 'Help', 'AppStarting', 'No', 'NWPen', 'SizeAll', 'SizeNESW', 'SizeNS', 'SizeNWSE', 'SizeWE', 'UpArrow')
 foreach (`$cName in `$cursorNames) {
@@ -184,7 +213,6 @@ Set-ItemProperty -Path `$cursorReg -Name '(default)' -Value 'Windows Default' -F
 Set-ItemProperty -Path `$cursorReg -Name 'Scheme Source' -Value 1 -Force
 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Accessibility' -Name 'CursorSize' -Value 1 -Force -ErrorAction SilentlyContinue
 
-# Trigger Win32 live reload of system cursors
 try {
     Add-Type @"
     using System;
@@ -199,7 +227,6 @@ try {
     }
 "@ -ErrorAction SilentlyContinue
     [WinCursorReset]::SystemParametersInfo(0x0057, 0, [IntPtr]::Zero, 0x01 -bor 0x02)
-    # OCR cursor IDs
     `$ocrIds = @(32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650)
     foreach (`$cid in `$ocrIds) {
         `$h = [WinCursorReset]::LoadCursor([IntPtr]::Zero, `$cid)
@@ -244,7 +271,7 @@ Start-Sleep -Seconds 2
 "@
 Set-Content -Path "$binDir\delete_supermouse.ps1" -Value $deletePs1 -Force
 
-# Add binDir to User PATH so 'delete supermouse' works from anywhere in CMD or PowerShell
+# Add binDir to User PATH
 try {
     $curPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
     if ($curPath -notlike "*$binDir*") {
