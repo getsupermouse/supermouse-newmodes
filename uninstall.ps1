@@ -1,9 +1,9 @@
-# THE SUPER MOUSE â€” Official Fast Clean Uninstaller & Cursor Restorer
+# THE SUPER MOUSE — Official Fast Clean Uninstaller & Cursor Restorer
 $ErrorActionPreference = 'SilentlyContinue'
 Clear-Host
 Write-Host ""
 Write-Host "  =======================================================" -ForegroundColor Red
-Write-Host "               THE SUPER MOUSE â€” Uninstaller             " -ForegroundColor White
+Write-Host "               THE SUPER MOUSE — Uninstaller             " -ForegroundColor White
 Write-Host "  =======================================================" -ForegroundColor Red
 Write-Host ""
 
@@ -24,18 +24,19 @@ Set-ItemProperty -Path $cursorReg -Name 'Scheme Source' -Value 1 -Force
 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Accessibility' -Name 'CursorSize' -Value 1 -Force -ErrorAction SilentlyContinue
 
 try {
-    Add-Type @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class WinCursorReset {
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
-        [DllImport("user32.dll")]
-        public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
-        [DllImport("user32.dll")]
-        public static extern bool SetSystemCursor(IntPtr hcur, uint id);
-    }
-"@ -ErrorAction SilentlyContinue
+    $csharpCode = @"
+using System;
+using System.Runtime.InteropServices;
+public class WinCursorReset {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
+    [DllImport("user32.dll")]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
+    [DllImport("user32.dll")]
+    public static extern bool SetSystemCursor(IntPtr hcur, uint id);
+}
+"@
+    Add-Type -TypeDefinition $csharpCode -ErrorAction SilentlyContinue
     [WinCursorReset]::SystemParametersInfo(0x0057, 0, [IntPtr]::Zero, 0x01 -bor 0x02)
     $ocrIds = @(32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650)
     foreach ($cid in $ocrIds) {
